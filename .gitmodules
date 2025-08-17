@@ -1,0 +1,3 @@
+[submodule "cgml-specification"]
+	path = cgml-specification
+	url = git@github.com:ddanssaert/cgml-specification.git
