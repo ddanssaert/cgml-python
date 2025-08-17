@@ -42,6 +42,9 @@ dev = [
 Homepage = "https://github.com/your-org/cgml-python"
 Issues = "https://github.com/your-org/cgml-python/issues"
 
+[project.scripts]
+simulate = "cgml.cli:simulate"
+
 [tool.setuptools]
 include-package-data = true
 

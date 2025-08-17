@@ -1,8 +1,8 @@
 from typing import Any, Dict, List, Optional
 import random
 import logging
-from engine import RulesEngine
-from state import (
+from .engine import RulesEngine
+from .state import (
     GameState,
     build_game_state_from_cgml,
     run_setup_phase,
@@ -12,7 +12,7 @@ from state import (
     move_all_cards,
     shuffle_zone,
 )
-from loader import load_cgml_file
+from .loader import load_cgml_file
 
 # Set up debug logger
 logger = logging.getLogger("simulator")
@@ -75,7 +75,7 @@ def deal_action(game_state: GameState, from_: Any, to: Any, count: Optional[int]
 
     Semantics: identical to moving N cards from the source to the target zone.
     """
-    from state import find_zone, move_cards
+    from .state import find_zone, move_cards
 
     if from_ is None or to is None:
         return

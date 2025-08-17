@@ -1,6 +1,6 @@
 from typing import Any, Dict, Callable, List, Union, Optional
 
-from loader import Condition, Operand, EffectAction
+from .loader import Condition, Operand, EffectAction
 
 
 def resolve_path(obj: Any, path: str, context: Optional[Dict[str, Any]] = None) -> Any:
@@ -316,7 +316,7 @@ class RulesEngine:
         return operand
 
     def execute_effect(self, effect_list: List[EffectAction], game_state: Any, context: Optional[Dict[str, Any]] = None) -> None:
-        """Executes a list of EffectAction models using the action registry. Supports FOR_EACH_PLAYER."""
+        """Executes a list of EffectAction models using an action registry. Supports FOR_EACH_PLAYER."""
         context = context or {}
         i = 0
         while i < len(effect_list):
