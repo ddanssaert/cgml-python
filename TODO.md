@@ -10,11 +10,11 @@ Legend
 ## 1) Loader, Schema, Modularity
 - [x] Enforce cgml_version equals "1.3" (reject others; clear error).
 - [x] Add meta.rng support to Meta model: { deterministic: bool, seed?: int }.
-- [ ] Implement !inherit directive with merge/override rules:
-  - [ ] Shallow object merge by key; child overrides parent.
-  - [ ] Array identity merge: rules by id; components.decks by name; components.zones by name; component_types entries by type/name; transitions by (from,to,id?).
-  - [ ] Deletion via disabled: true.
-  - [ ] Rule refinement via extends: <rule_id> (advisory validation).
+- [x] Implement !inherit directive with merge/override rules:
+  - [x] Shallow object merge by key; child overrides parent.
+  - [x] Array identity merge: rules by id; components.decks by name; components.zones by name; component_types entries by type/name; transitions by (from,to,id?).
+  - [x] Deletion via disabled: true.
+  - [x] Rule refinement via extends: <rule_id> (advisory validation).
 - [ ] After resolving imports and inheritance, validate merged document against schema (cgml.schema.json).
 - [ ] Expand Components models:
   - [ ] ZoneInstance: owner_scope (player|team|global).
