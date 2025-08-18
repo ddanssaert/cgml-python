@@ -1,4 +1,4 @@
-from typing import Any, Dict, Callable, List, Union, Optional
+from typing import Any, Dict, Callable, List, Union, Optional, Tuple
 
 from .loader import Condition, Operand, EffectAction
 
@@ -114,7 +114,7 @@ class RulesEngine:
     def __init__(self, action_registry: Dict[str, Callable]):
         self.actions = action_registry
 
-    def _maybe_compare_ranks(self, left: Any, right: Any, game_state: Any) -> (Any, Any):
+    def _maybe_compare_ranks(self, left: Any, right: Any, game_state: Any) -> Tuple[Any, Any]:
         """Convert left/right to comparable ordinal if they look like ranks for the game's deck type."""
         cgml_def = getattr(game_state, "cgml_definition", None)
         if cgml_def is None:
@@ -315,8 +315,47 @@ class RulesEngine:
                 return [self.resolve_operand(x, game_state, context) for x in operand.list_]
         return operand
 
+    def _resolve_action_params(self, action_def: EffectAction, game_state: Any, context: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+        """Builds the concrete action name and resolved parameter dict for execution."""
+        action_name = action_def.action
+        raw_params = action_def.dict(exclude={"action"}, by_alias=False, exclude_none=True)
+        params: Dict[str, Any] = {}
+        for k, v in raw_params.items():
+            if isinstance(v, (dict, list)):
+                params[k] = self.resolve_operand(v, game_state, context)
+            else:
+                params[k] = v
+        return action_name, params
+
+    def _collect_player_indices(self, players_operand: Any, game_state: Any, context: Dict[str, Any]) -> List[int]:
+        """Resolves a players operand to a deterministic list of player indices."""
+        indices: List[int] = []
+        if players_operand is None:
+            return list(range(len(getattr(game_state, 'players', []))))
+        resolved = self.resolve_operand(players_operand, game_state, context)
+        all_players = list(getattr(game_state, 'players', []))
+        if isinstance(resolved, list) and resolved and isinstance(resolved[0], int):
+            # Explicit indices
+            for i in resolved:
+                if 0 <= int(i) < len(all_players):
+                    indices.append(int(i))
+            return indices
+        # Treat as list of Player objects (or empty => all)
+        if not resolved:
+            return list(range(len(all_players)))
+        for idx, p in enumerate(all_players):
+            if p in resolved:
+                indices.append(idx)
+        return indices
+
     def execute_effect(self, effect_list: List[EffectAction], game_state: Any, context: Optional[Dict[str, Any]] = None) -> None:
-        """Executes a list of EffectAction models using an action registry. Supports FOR_EACH_PLAYER."""
+        """Executes a list of EffectAction models using an action registry.
+
+        Implements control-structure actions per CGML v1.3:
+        - FOR_EACH_PLAYER with order: clockwise|counterclockwise|simultaneous and explicit 'do'
+        - PARALLEL with wait: all (deterministic order)
+        - IF with then/else blocks
+        """
         context = context or {}
         i = 0
         while i < len(effect_list):
@@ -324,33 +363,91 @@ class RulesEngine:
             action_def = EffectAction.parse_obj(raw) if isinstance(raw, dict) else raw
             action_name = action_def.action
 
-            # Special handling: FOR_EACH_PLAYER (only with inline 'do')
+            # --- Control Structure: FOR_EACH_PLAYER ---
             if action_name == 'FOR_EACH_PLAYER':
                 players_operand = getattr(action_def, 'players', None)
-                players_list = self.resolve_operand(players_operand, game_state, context) if players_operand else getattr(game_state, 'players', [])
-                # Convert to indices
-                indices: List[int] = []
-                for idx, p in enumerate(getattr(game_state, 'players', [])):
-                    if not players_list:
-                        indices.append(idx)
-                    elif isinstance(players_list, list):
-                        if p in players_list or (isinstance(players_list[0], int) and idx in players_list):
-                            indices.append(idx)
+                indices = self._collect_player_indices(players_operand, game_state, context)
+                order = (getattr(action_def, 'order', None) or 'clockwise').lower()
+                if order == 'counterclockwise':
+                    indices = list(reversed(indices))
                 do_actions = getattr(action_def, 'do', None)
-                if isinstance(do_actions, list) and do_actions:
-                    for idx in indices:
-                        local_ctx = dict(context)
-                        local_ctx['$player'] = idx
-                        self.execute_effect(do_actions, game_state, context=local_ctx)
-                    i += 1
-                    continue
-                else:
-                    # No inline 'do' provided -> reject (spec requires explicit do)
+                if not (isinstance(do_actions, list) and do_actions):
+                    # Spec requires explicit 'do'
                     print("Action not implemented: FOR_EACH_PLAYER without 'do' is not supported.")
                     i += 1
                     continue
 
-            # Normal action execution
+                if order == 'simultaneous':
+                    # Execute each action step with a two-phase approach: resolve params per player, then apply
+                    for step_raw in do_actions:
+                        step_def = EffectAction.parse_obj(step_raw) if isinstance(step_raw, dict) else step_raw
+                        step_name = step_def.action
+                        action_func = self.actions.get(step_name)
+                        if not action_func:
+                            print(f"Action not implemented: {step_name}")
+                            continue
+                        # Phase 1: resolve parameters for each player without mutating state
+                        batch: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []  # (params, local_ctx)
+                        for idx_val in indices:
+                            local_ctx = dict(context)
+                            local_ctx['$player'] = idx_val
+                            # Re-parse to avoid carry-over
+                            step_def_local = EffectAction.parse_obj(step_raw) if isinstance(step_raw, dict) else step_raw
+                            _, params = self._resolve_action_params(step_def_local, game_state, local_ctx)
+                            batch.append((params, local_ctx))
+                        # Phase 2: apply in deterministic order
+                        for params, local_ctx in batch:
+                            action_func(game_state, context=local_ctx, **params)
+                    i += 1
+                    continue
+                else:
+                    # Sequential per player: execute the entire do list for each player before the next
+                    for idx_val in indices:
+                        local_ctx = dict(context)
+                        local_ctx['$player'] = idx_val
+                        self.execute_effect(do_actions, game_state, context=local_ctx)
+                    i += 1
+                    continue
+
+            # --- Control Structure: PARALLEL ---
+            if action_name == 'PARALLEL':
+                branches_raw = getattr(action_def, 'do', None)
+                wait_mode = (getattr(action_def, 'wait', None) or 'all').lower()
+                if not isinstance(branches_raw, list) or not branches_raw:
+                    i += 1
+                    continue
+                # Normalize branches: each entry is a list of actions
+                branches: List[List[EffectAction]] = []
+                for br in branches_raw:
+                    if isinstance(br, list):
+                        branches.append([EffectAction.parse_obj(x) if isinstance(x, dict) else x for x in br])
+                    else:
+                        branches.append([EffectAction.parse_obj(br) if isinstance(br, dict) else br])
+                # Deterministic order; for wait: all, simply execute sequentially
+                if wait_mode == 'all':
+                    for branch in branches:
+                        self.execute_effect(branch, game_state, context=dict(context))
+                else:
+                    # For now, treat non-'all' the same as 'all' (engine lacks async)
+                    for branch in branches:
+                        self.execute_effect(branch, game_state, context=dict(context))
+                i += 1
+                continue
+
+            # --- Control Structure: IF ---
+            if action_name == 'IF':
+                cond_node = getattr(action_def, 'condition', None)
+                then_actions = getattr(action_def, 'then', None)
+                else_actions = getattr(action_def, 'else', None)
+                cond_ok = self.evaluate_condition(cond_node, game_state, context) if cond_node is not None else False
+                if cond_ok and isinstance(then_actions, list):
+                    self.execute_effect(then_actions, game_state, context=dict(context))
+                elif (not cond_ok) and isinstance(else_actions, list):
+                    self.execute_effect(else_actions, game_state, context=dict(context))
+                i += 1
+                continue
+
+            # --- Normal action execution ---
             action_func = self.actions.get(action_name)
 
             if action_func:

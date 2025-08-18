@@ -69,9 +69,9 @@ Legend
   - [ ] MILL (move N from deck to discard).
   - [ ] REVEAL_MATCHING (compute set; apply visibility change).
 - Flow control / structure
-  - [ ] FOR_EACH_PLAYER: implement order parameter and simultaneous semantics; remove shorthand that fans-out the next action; only explicit do is allowed. [x] Shorthand removed in engine.
-  - [ ] PARALLEL: execute branches and join per wait: all; deterministic order.
-  - [ ] IF: implement with then/else blocks using engine condition evaluation.
+  - [x] FOR_EACH_PLAYER: implement order parameter and simultaneous semantics; remove shorthand that fans-out the next action; only explicit do is allowed. [x] Shorthand removed in engine.
+  - [x] PARALLEL: execute branches and join per wait: all; deterministic order.
+  - [x] IF: implement with then/else blocks using engine condition evaluation.
 - Flow modifiers
   - [ ] SET_PHASE
   - [ ] SKIP_TURN
