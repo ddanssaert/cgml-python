@@ -2,7 +2,6 @@ import os
 from typing import List, Dict, Any, Optional, Union, Tuple
 from pydantic import BaseModel, validator, Field, ValidationError
 import yaml
-import yaml_include  # Make sure this is installed
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
@@ -209,7 +208,6 @@ class CgmlDefinition(BaseModel):
     rules: List[Rule]
 # ---- Loader ---- #
 
-
 def _inherit_constructor(loader: yaml.Loader, node: yaml.Node) -> Dict[str, str]:
     """YAML constructor for !inherit directive.
 
@@ -219,23 +217,32 @@ def _inherit_constructor(loader: yaml.Loader, node: yaml.Node) -> Dict[str, str]
     value = loader.construct_scalar(node)
     return {"__inherit__": value}
 
+class RelativeIncludeLoader(yaml.FullLoader):
+    """YAML Loader that tracks the current file for !include to resolve relativity."""
+    def __init__(self, stream, current_dir=None):
+        super().__init__(stream)
+        if hasattr(stream, 'name'):
+            self._current_dir = os.path.dirname(os.path.abspath(stream.name))
+        elif current_dir:
+            self._current_dir = current_dir
+        else:
+            self._current_dir = os.getcwd()
 
-# Add the !include constructor for PyYAML+yaml_include
-yaml.add_constructor(
-    "!include",
-    yaml_include.Constructor(base_dir=os.path.dirname(os.path.abspath(__file__)))
-)
-# Add our !inherit constructor (parsed into a small mapping)
-yaml.add_constructor("!inherit", _inherit_constructor)
+def relative_include_constructor(loader: RelativeIncludeLoader, node):
+    rel_path = loader.construct_scalar(node)
+    full_path = os.path.join(loader._current_dir, rel_path)
+    with open(full_path, 'r', encoding='utf-8') as f:
+        return yaml.load(f, Loader=RelativeIncludeLoader)
+
+yaml.add_constructor("!include", relative_include_constructor, Loader=RelativeIncludeLoader)
+yaml.add_constructor("!inherit", _inherit_constructor, Loader=RelativeIncludeLoader)
 
 
 def _read_text(path_or_url: str, base_dir: Optional[str] = None) -> str:
     """Reads text content from a local path (resolved relative to base_dir) or URL.
-
     Args:
         path_or_url: Local file path or http(s) URL.
         base_dir: Base directory to resolve relative paths.
-
     Returns:
         File contents as string.
     """
@@ -561,7 +568,6 @@ def _merge_rules(parent_list: List[Dict[str, Any]], child_list: List[Dict[str, A
         # Advisory validation for extends
         ext = rule.get("extends")
         if ext and ext not in index and not any(p.get("id") == ext for p in parent_list):
-            # Non-fatal note (print once). Using print to keep dependencies minimal.
             print(f"Warning: rule '{rid}' declares extends='{ext}' which was not found in parent rules.")
 
     result = [x for x in items if not (isinstance(x, dict) and x.get("__REMOVED__"))]
@@ -632,19 +638,33 @@ def _load_and_merge(file_path: str) -> Dict[str, Any]:
     """
     base_dir = os.path.dirname(os.path.abspath(file_path))
 
-    # Load raw YAML (supports !include and !inherit sentinel)
+    # Load raw YAML with RelativeIncludeLoader
     with open(file_path, "r", encoding="utf-8") as f:
-        raw = yaml.load(f, Loader=yaml.FullLoader)
+        raw = yaml.load(f, Loader=RelativeIncludeLoader)
 
     child_doc = _normalize_parsed_document(raw)
 
-    # Detect inherit path
-    inherit_path = child_doc.pop("__inherit__", None) or child_doc.pop("inherit", None)
+    # Normalize inherit in multiple supported shapes:
+    #  - __inherit__: "<path>"                 (from bare top-level !inherit)
+    #  - inherit: "<path>"                     (recommended)
+    #  - inherit: { "__inherit__": "<path>" }  (inherit: !inherit "<path>")
+    inherit_obj = child_doc.pop("__inherit__", None)
+    if inherit_obj is None:
+        inherit_obj = child_doc.pop("inherit", None)
+
+    if isinstance(inherit_obj, dict) and "__inherit__" in inherit_obj:
+        inherit_path = inherit_obj["__inherit__"]
+    else:
+        inherit_path = inherit_obj
+
     if inherit_path:
+        if not isinstance(inherit_path, str):
+            raise ValueError("Invalid inherit value: expected string path, "
+                             f"got {type(inherit_path).__name__}")
         # Resolve parent (relative to current file)
         if urlparse(inherit_path).scheme in {"http", "https"}:
             parent_text = _read_text(inherit_path)
-            parent_raw = yaml.load(parent_text, Loader=yaml.FullLoader)
+            parent_raw = yaml.load(parent_text, Loader=RelativeIncludeLoader)
             parent_doc = _normalize_parsed_document(parent_raw)
         else:
             parent_full = inherit_path if os.path.isabs(inherit_path) else os.path.join(base_dir, inherit_path)
@@ -656,6 +676,39 @@ def _load_and_merge(file_path: str) -> Dict[str, Any]:
     # No inheritance; return as-is
     return child_doc
 
+def instantiate_decks(components: Components) -> None:
+    """Expands decks that reference a type into full realized definitions."""
+    if not components.decks or not components.component_types:
+        return
+    deck_types = components.component_types.get('deck_types', {})
+    for deck_name, deck_inst in list(components.decks.items()):
+        dt_name = deck_inst.type if hasattr(deck_inst, 'type') else deck_inst.get('type')
+        if dt_name and dt_name in deck_types:
+            template = deck_types[dt_name].dict(exclude_none=True)
+            inst_dict = deck_inst.dict(exclude_none=True) if hasattr(deck_inst, 'dict') else dict(deck_inst)
+            # Merge template (as base) + instance (overrides or adds meta etc)
+            merged = {**template, **inst_dict}
+            # Remove 'type' after expansion to avoid later confusion
+            merged.pop('type', None)
+            # It's a pydantic DeckInstance if you want, or just a dict
+            components.decks[deck_name] = merged
+
+def instantiate_zones(components: Components) -> None:
+    """Expands decks that reference a type into full realized definitions."""
+    if not components.zones or not components.component_types:
+        return
+    zone_types = components.component_types.get('zone_types', {})
+    for zone_name, zone_inst in list(components.decks.items()):
+        dt_name = zone_inst.type if hasattr(zone_inst, 'type') else zone_inst.get('type')
+        if dt_name and dt_name in zone_types:
+            template = zone_types[dt_name].dict(exclude_none=True)
+            inst_dict = zone_inst.dict(exclude_none=True) if hasattr(zone_inst, 'dict') else dict(zone_inst)
+            # Merge template (as base) + instance (overrides or adds meta etc)
+            merged = {**template, **inst_dict}
+            # Remove 'type' after expansion to avoid later confusion
+            merged.pop('type', None)
+            # It's a pydantic DeckInstance if you want, or just a dict
+            components.zones[zone_name] = merged
 
 def load_cgml_file(file_path: str) -> Optional[CgmlDefinition]:
     """Loads and validates a CGML file (YAML), resolving !include and !inherit.
@@ -664,6 +717,8 @@ def load_cgml_file(file_path: str) -> Optional[CgmlDefinition]:
     """
     try:
         merged_doc = _load_and_merge(file_path)
+        for inclusion in merged_doc['imports']:
+            merged_doc = _merge_top_level(merged_doc, inclusion)
     except Exception as e:
         print(f"Failed to load/merge CGML file: {e}")
         return None
@@ -676,6 +731,8 @@ def load_cgml_file(file_path: str) -> Optional[CgmlDefinition]:
 
     try:
         definition = CgmlDefinition(**merged_doc)
+        #instantiate_decks(definition.components)
+        #instantiate_zones(definition.components)
         return definition
     except ValidationError as e:
         print("Validation failed:")

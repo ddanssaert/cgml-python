@@ -5,7 +5,7 @@
       <sourceFolder url="file://$MODULE_DIR$/cgml" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
     </content>
-    <orderEntry type="jdk" jdkName="Python 3.8 (cgml-python)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Python 3.11 (cgml-python)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="PyDocumentationSettings">
