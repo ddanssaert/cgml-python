@@ -36,6 +36,8 @@ Legend
 - [ ] Support ref placeholders in path strings: ref:<name>.
 - [x] Keep $.shared_zones only if documented; otherwise remove or alias through $.zones (spec-align).
 - [x] Remove support for non-$ dotted paths; require $-rooted selectors (align to spec).
+- [ ] Add support for group_by operator for aggregating/grouping lists.
+- [ ] Add support for distinct operator for deduplicating lists.
 
 ## 4) Expression / Operator Engine
 - [ ] Ensure top-level Condition nodes always resolve to boolean. Avoid returning raw values from max/min/sum/count in evaluate_condition.
@@ -48,6 +50,8 @@ Legend
 - [ ] list constructor (list) – already partially supported; add schema docs if needed.
 - [ ] rank_value: use correct deck context (zone.of_deck or originating deck type); raise if ambiguous.
 - [ ] top/all/bottom as operands are supported; unify with path function equivalents.
+- [ ] Add support for distinct operator as per v1.3.
+- [ ] Add support for group_by operator as per v1.3.
 
 ## 5) Actions: Movement, Visibility, Search, Random, Structure
 - Movement & dealing
@@ -72,6 +76,7 @@ Legend
   - [x] FOR_EACH_PLAYER: implement order parameter and simultaneous semantics; remove shorthand that fans-out the next action; only explicit do is allowed. [x] Shorthand removed in engine.
   - [x] PARALLEL: execute branches and join per wait: all; deterministic order.
   - [x] IF: implement with then/else blocks using engine condition evaluation.
+  - [ ] FOR_EACH: Implement generic FOR_EACH action for arbitrary lists (binds ref:item for each iteration).
 - Flow modifiers
   - [ ] SET_PHASE
   - [ ] SKIP_TURN
@@ -81,6 +86,7 @@ Legend
   - [ ] REMOVE_PHASE
 - Player input
   - [ ] REQUEST_INPUT with options (path/value) and multiselect; supply store_as.
+  - [ ] REQUEST_INPUT: support dynamic filtering and options via operator expressions (distinct, filter, etc.).
 - Action plumbing
   - [ ] Return values from actions and support store_as on each step.
   - [ ] Support ref usage in subsequent operands and path placeholders (ref:<name>).
@@ -99,8 +105,8 @@ Legend
   - [ ] on.draw, on.play, on.discard, on.move (instrument actions to emit these).
   - [ ] timing: replace to replace default event behavior (e.g., replace draw).
 - Event context
-  - [ ] Standardize event payload (e.g., $.card, $.from, $.to, actor/player, cause) and make available to conditions/effects.
-
+  - [ ] Provide standard event context object (fields: $.card, $.from, $.to, $.player, etc.) for every event/trigger type.
+  - [ ] Ensure dynamic referencing of event context in path selectors during rule evaluation.
 ## 7) Flow, Turn Order, Simultaneity, Transitions, Win Condition
 - [ ] Apply flow.player_order: clockwise | counterclockwise | simultaneous across per-turn phases.
 - [ ] Simultaneity semantics: batch operations; deterministic tie-breakers (seating order, then player id) when needed.
@@ -130,6 +136,10 @@ Legend
 - [ ] Define event context schema for on.draw/on.move/etc (fields and anchors like $.card).
 - [ ] Clarify DEAL vs DEAL_ROUND_ROBIN semantics with examples in setup/runtime.
 - [ ] Confirm spec disallows plain dotted paths and separate $.shared_zones root (engine will not support them).
+- [ ] Standardize generic FOR_EACH action over arbitrary lists with ref:item and FOR_EACH examples.
+- [ ] Standardize distinct and group_by operators in the operator vocabulary, with usage and engine requirements.
+- [ ] Document dynamic REQUEST_INPUT options and filtering via arbitrary operator expressions.
+- [ ] Clarify rank comparison: engines must require rank_value where relevant; no implicit coercion/casting.
 
 ## 12) Tests & Conformance Suite
 - [ ] Build test fixtures for examples in README (examples/*.yaml) to validate operators/actions.
@@ -142,6 +152,9 @@ Legend
 - [ ] Update README with engine-supported subset until full alignment, including any temporary extensions.
 - [ ] Provide migration notes (e.g., DEAL behavior change; FOR_EACH shorthand removal; rank comparisons).
 - [ ] Add developer docs for writing actions and emitting events.
+- [ ] Document new FOR_EACH (arbitrary list) control structure and ref:item pattern in README and samples.
+- [ ] Document distinct/group_by operators in Expression Language section.
+- [ ] Add examples for dynamic REQUEST_INPUT options using operator expressions.
 
 ---
 
