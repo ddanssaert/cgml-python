@@ -133,13 +133,13 @@ Legend
 
 ## 11) Spec Feedback / Proposed Updates
 - [x] Document list operator explicitly in §12 since examples use it.
-- [ ] Define event context schema for on.draw/on.move/etc (fields and anchors like $.card).
-- [ ] Clarify DEAL vs DEAL_ROUND_ROBIN semantics with examples in setup/runtime.
-- [ ] Confirm spec disallows plain dotted paths and separate $.shared_zones root (engine will not support them).
-- [ ] Standardize generic FOR_EACH action over arbitrary lists with ref:item and FOR_EACH examples.
-- [ ] Standardize distinct and group_by operators in the operator vocabulary, with usage and engine requirements.
-- [ ] Document dynamic REQUEST_INPUT options and filtering via arbitrary operator expressions.
-- [ ] Clarify rank comparison: engines must require rank_value where relevant; no implicit coercion/casting.
+- [x] Define event context schema for on.draw/on.move/etc (fields and anchors like $.card).
+- [x] Clarify DEAL vs DEAL_ROUND_ROBIN semantics with examples in setup/runtime.
+- [x] Confirm spec disallows plain dotted paths and separate $.shared_zones root (engine will not support them).
+- [x] Standardize generic FOR_EACH action over arbitrary lists with ref:item and FOR_EACH examples.
+- [x] Standardize distinct and group_by operators in the operator vocabulary, with usage and engine requirements.
+- [x] Document dynamic REQUEST_INPUT options and filtering via arbitrary operator expressions.
+- [x] Clarify rank comparison: engines must require rank_value where relevant; no implicit coercion/casting.
 
 ## 12) Tests & Conformance Suite
 - [ ] Build test fixtures for examples in README (examples/*.yaml) to validate operators/actions.
