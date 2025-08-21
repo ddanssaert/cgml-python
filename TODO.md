@@ -132,7 +132,7 @@ Legend
 - [x] Remove $.shared_zones as a separate path root; provide $.zones only (maintain internal alias if needed but not exposed).
 
 ## 11) Spec Feedback / Proposed Updates
-- [ ] Document list operator explicitly in §12 since examples use it.
+- [x] Document list operator explicitly in §12 since examples use it.
 - [ ] Define event context schema for on.draw/on.move/etc (fields and anchors like $.card).
 - [ ] Clarify DEAL vs DEAL_ROUND_ROBIN semantics with examples in setup/runtime.
 - [ ] Confirm spec disallows plain dotted paths and separate $.shared_zones root (engine will not support them).
