@@ -2,16 +2,9 @@ from typing import Any, Dict, Callable, List, Union, Optional, Tuple
 
 from .loader import Condition, Operand, EffectAction
 
-
 def resolve_path(obj: Any, path: str, context: Optional[Dict[str, Any]] = None) -> Any:
     """
-    Selector resolver supporting a subset of CGML v1.3 $-rooted syntax:
-    - $.players[0].zones.hand
-    - $.zones.deck
-    - $.players[*]
-    - $.players[$player]
-
-    Non-$ dotted paths are not supported.
+    Selector resolver supporting a subset of CGML v1.3 $-rooted syntax.
     """
     context = context or {}
     if path is None:
@@ -21,16 +14,14 @@ def resolve_path(obj: Any, path: str, context: Optional[Dict[str, Any]] = None) 
     if not p.startswith("$"):
         raise ValueError(f"Only $-rooted selector paths are supported (got: {path})")
 
-    # Build a synthetic root for selector-style paths
     root = {
         "players": getattr(obj, "players", None),
         "zones": getattr(obj, "shared_zones", None),
     }
     current: Any = root
-    # Tokenize by dots while keeping bracket segments grouped
     parts: List[str] = []
     buf = ""
-    i = 1  # skip leading $
+    i = 1
     while i < len(p):
         ch = p[i]
         if ch == '.' and ('[' not in buf or (buf.count('[') == buf.count(']'))):
@@ -43,7 +34,6 @@ def resolve_path(obj: Any, path: str, context: Optional[Dict[str, Any]] = None) 
         i += 1
     if buf:
         parts.append(buf)
-    # Resolve each part (with optional [index])
     for part in parts:
         key = part
         idx_token: Optional[str] = None
@@ -57,7 +47,6 @@ def resolve_path(obj: Any, path: str, context: Optional[Dict[str, Any]] = None) 
                 idx_token = inside
         if key:
             if isinstance(current, list):
-                # map attribute/key over list elements
                 mapped: List[Any] = []
                 for elem in current:
                     if isinstance(elem, dict):
@@ -70,13 +59,11 @@ def resolve_path(obj: Any, path: str, context: Optional[Dict[str, Any]] = None) 
             else:
                 current = getattr(current, key)
         if star:
-            # Keep list as-is
             if isinstance(current, dict):
                 current = list(current.values())
             if not isinstance(current, list):
                 current = [current]
         elif idx_token is not None:
-            # Index can be integer or $player reference
             if idx_token.startswith('$'):
                 if idx_token in context:
                     try:
@@ -98,7 +85,6 @@ def resolve_path(obj: Any, path: str, context: Optional[Dict[str, Any]] = None) 
                 raise KeyError(f"Cannot index non-collection with [{idx_token}] in path {path}")
     return current
 
-
 def get_rank_index(cgml_definition: Any, deck_type_name: str, rank_value: Any) -> int:
     """Looks up the numeric index of a rank in the deck's rank_hierarchy."""
     rank_hierarchy = cgml_definition.components.component_types['deck_types'][deck_type_name].rank_hierarchy
@@ -107,30 +93,29 @@ def get_rank_index(cgml_definition: Any, deck_type_name: str, rank_value: Any) -
     except ValueError:
         raise ValueError(f"Rank '{rank_value}' not found in rank_hierarchy: {rank_hierarchy}")
 
-
 class RulesEngine:
     """Evaluates conditions and executes effects using an action registry."""
 
     def __init__(self, action_registry: Dict[str, Callable]):
         self.actions = action_registry
 
-    def _maybe_compare_ranks(self, left: Any, right: Any, game_state: Any) -> Tuple[Any, Any]:
-        """Convert left/right to comparable ordinal if they look like ranks for the game's deck type."""
-        cgml_def = getattr(game_state, "cgml_definition", None)
-        if cgml_def is None:
-            return left, right
-        try:
-            deck_types = cgml_def.components.component_types.get('deck_types', {})
-            if not deck_types:
-                return left, right
-            deck_type_name = next(iter(deck_types))
-            rank_hierarchy = [str(x) for x in deck_types[deck_type_name].rank_hierarchy]
-            if str(left) in rank_hierarchy and str(right) in rank_hierarchy:
-                left = rank_hierarchy.index(str(left))
-                right = rank_hierarchy.index(str(right))
-        except Exception:
-            pass
-        return left, right
+    def _is_rank_literal(self, value: Any, cgml_def: Any) -> bool:
+        """
+        Returns True if the value is a rank (string/int) in any deck_type's rank_hierarchy.
+        Ignores ints, floats, and lists (should only be called for rank comparison).
+        """
+        if isinstance(value, (int, float)):
+            return False
+        if isinstance(value, list):
+            return False
+        if not (cgml_def and cgml_def.components and cgml_def.components.component_types):
+            return False
+        deck_types = cgml_def.components.component_types.get('deck_types', {})
+        for deck_name in deck_types:
+            hierarchy = [str(x) for x in deck_types[deck_name].rank_hierarchy]
+            if str(value) in hierarchy:
+                return True
+        return False
 
     def _op_rank_value(self, arg: Any, game_state: Any, context: Dict[str, Any]) -> int:
         value = self.resolve_operand(arg, game_state, context)
@@ -157,7 +142,6 @@ class RulesEngine:
         """Best-effort counting for zones, lists, strings, and scalars."""
         if value is None:
             return 0
-        # Zone-like with cards
         if hasattr(value, 'cards') and isinstance(getattr(value, 'cards'), list):
             return len(getattr(value, 'cards'))
         if hasattr(value, 'card_count'):
@@ -165,7 +149,6 @@ class RulesEngine:
                 return int(getattr(value, 'card_count'))
             except Exception:
                 pass
-        # Collections and strings
         try:
             return len(value)
         except TypeError:
@@ -177,29 +160,61 @@ class RulesEngine:
         game_state: Any,
         context: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """Recursively evaluates a Condition (pydantic model or dict node)."""
+        """
+        Recursively evaluates a Condition (pydantic model or dict node).
+        Enforces explicit use of rank_value in all rank comparisons.
+        """
         context = context or {}
-
         if not isinstance(cond, (Condition, dict)):
             return bool(cond)
-
         if isinstance(cond, dict):
             cond = Condition.parse_obj(cond)
+        cgml_def = getattr(game_state, "cgml_definition", None)
+
+        def _raise_rank_error(op_name: str) -> None:
+            raise ValueError(
+                f"CGML spec: '{op_name}' between ranks requires explicit use of 'rank_value' operator. "
+                f"No implicit string-based rank comparison is permitted (§12.5, §15, §19)."
+            )
 
         if cond.isEqual is not None:
             left = self.resolve_operand(cond.isEqual[0], game_state, context)
             right = self.resolve_operand(cond.isEqual[1], game_state, context)
-            left, right = self._maybe_compare_ranks(left, right, game_state)
+            lv = cond.isEqual[0]
+            rv = cond.isEqual[1]
+            lv_is_rank_val = isinstance(lv, dict) and "rank_value" in lv
+            rv_is_rank_val = isinstance(rv, dict) and "rank_value" in rv
+            rank_comparison = self._is_rank_literal(left, cgml_def) or self._is_rank_literal(right, cgml_def)
+            if rank_comparison and not (lv_is_rank_val and rv_is_rank_val):
+                print(f"DEBUG RANK_ENFORCE: left={left} ({type(left)}), right={right} ({type(right)}), "
+                      f"lv={lv}, rv={rv}, rank_comparison={rank_comparison}")
+                _raise_rank_error("isEqual")
             return left == right
         if cond.isGreaterThan is not None:
             left = self.resolve_operand(cond.isGreaterThan[0], game_state, context)
             right = self.resolve_operand(cond.isGreaterThan[1], game_state, context)
-            left, right = self._maybe_compare_ranks(left, right, game_state)
+            lv = cond.isGreaterThan[0]
+            rv = cond.isGreaterThan[1]
+            lv_is_rank_val = isinstance(lv, dict) and "rank_value" in lv
+            rv_is_rank_val = isinstance(rv, dict) and "rank_value" in rv
+            rank_comparison = self._is_rank_literal(left, cgml_def) or self._is_rank_literal(right, cgml_def)
+            if rank_comparison and not (lv_is_rank_val and rv_is_rank_val):
+                print(f"DEBUG RANK_ENFORCE: left={left} ({type(left)}), right={right} ({type(right)}), "
+                      f"lv={lv}, rv={rv}, rank_comparison={rank_comparison}")
+                _raise_rank_error("isGreaterThan")
             return left > right
         if cond.isLessThan is not None:
             left = self.resolve_operand(cond.isLessThan[0], game_state, context)
             right = self.resolve_operand(cond.isLessThan[1], game_state, context)
-            left, right = self._maybe_compare_ranks(left, right, game_state)
+            lv = cond.isLessThan[0]
+            rv = cond.isLessThan[1]
+            lv_is_rank_val = isinstance(lv, dict) and "rank_value" in lv
+            rv_is_rank_val = isinstance(rv, dict) and "rank_value" in rv
+            rank_comparison = self._is_rank_literal(left, cgml_def) or self._is_rank_literal(right, cgml_def)
+            if rank_comparison and not (lv_is_rank_val and rv_is_rank_val):
+                print(f"DEBUG RANK_ENFORCE: left={left} ({type(left)}), right={right} ({type(right)}), "
+                      f"lv={lv}, rv={rv}, rank_comparison={rank_comparison}")
+                _raise_rank_error("isLessThan")
             return left < right
         if getattr(cond, "and_", None) is not None:
             return all(self.evaluate_condition(sub, game_state, context) for sub in cond.and_)
@@ -245,7 +260,9 @@ class RulesEngine:
         game_state: Any,
         context: Optional[Dict[str, Any]] = None
     ) -> Any:
-        """Resolves an operand node: can be Operand model, dict, or value."""
+        """
+        Resolves an operand node: can be Operand model, dict, or value.
+        """
         context = context or {}
 
         if isinstance(operand, dict):
@@ -316,7 +333,6 @@ class RulesEngine:
         return operand
 
     def _resolve_action_params(self, action_def: EffectAction, game_state: Any, context: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-        """Builds the concrete action name and resolved parameter dict for execution."""
         action_name = action_def.action
         raw_params = action_def.dict(exclude={"action"}, by_alias=False, exclude_none=True)
         params: Dict[str, Any] = {}
@@ -328,19 +344,16 @@ class RulesEngine:
         return action_name, params
 
     def _collect_player_indices(self, players_operand: Any, game_state: Any, context: Dict[str, Any]) -> List[int]:
-        """Resolves a players operand to a deterministic list of player indices."""
         indices: List[int] = []
         if players_operand is None:
             return list(range(len(getattr(game_state, 'players', []))))
         resolved = self.resolve_operand(players_operand, game_state, context)
         all_players = list(getattr(game_state, 'players', []))
         if isinstance(resolved, list) and resolved and isinstance(resolved[0], int):
-            # Explicit indices
             for i in resolved:
                 if 0 <= int(i) < len(all_players):
                     indices.append(int(i))
             return indices
-        # Treat as list of Player objects (or empty => all)
         if not resolved:
             return list(range(len(all_players)))
         for idx, p in enumerate(all_players):
@@ -349,13 +362,6 @@ class RulesEngine:
         return indices
 
     def execute_effect(self, effect_list: List[EffectAction], game_state: Any, context: Optional[Dict[str, Any]] = None) -> None:
-        """Executes a list of EffectAction models using an action registry.
-
-        Implements control-structure actions per CGML v1.3:
-        - FOR_EACH_PLAYER with order: clockwise|counterclockwise|simultaneous and explicit 'do'
-        - PARALLEL with wait: all (deterministic order)
-        - IF with then/else blocks
-        """
         context = context or {}
         i = 0
         while i < len(effect_list):
@@ -363,7 +369,6 @@ class RulesEngine:
             action_def = EffectAction.parse_obj(raw) if isinstance(raw, dict) else raw
             action_name = action_def.action
 
-            # --- Control Structure: FOR_EACH_PLAYER ---
             if action_name == 'FOR_EACH_PLAYER':
                 players_operand = getattr(action_def, 'players', None)
                 indices = self._collect_player_indices(players_operand, game_state, context)
@@ -372,13 +377,11 @@ class RulesEngine:
                     indices = list(reversed(indices))
                 do_actions = getattr(action_def, 'do', None)
                 if not (isinstance(do_actions, list) and do_actions):
-                    # Spec requires explicit 'do'
                     print("Action not implemented: FOR_EACH_PLAYER without 'do' is not supported.")
                     i += 1
                     continue
 
                 if order == 'simultaneous':
-                    # Execute each action step with a two-phase approach: resolve params per player, then apply
                     for step_raw in do_actions:
                         step_def = EffectAction.parse_obj(step_raw) if isinstance(step_raw, dict) else step_raw
                         step_name = step_def.action
@@ -386,22 +389,18 @@ class RulesEngine:
                         if not action_func:
                             print(f"Action not implemented: {step_name}")
                             continue
-                        # Phase 1: resolve parameters for each player without mutating state
-                        batch: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []  # (params, local_ctx)
+                        batch: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
                         for idx_val in indices:
                             local_ctx = dict(context)
                             local_ctx['$player'] = idx_val
-                            # Re-parse to avoid carry-over
                             step_def_local = EffectAction.parse_obj(step_raw) if isinstance(step_raw, dict) else step_raw
                             _, params = self._resolve_action_params(step_def_local, game_state, local_ctx)
                             batch.append((params, local_ctx))
-                        # Phase 2: apply in deterministic order
                         for params, local_ctx in batch:
                             action_func(game_state, context=local_ctx, **params)
                     i += 1
                     continue
                 else:
-                    # Sequential per player: execute the entire do list for each player before the next
                     for idx_val in indices:
                         local_ctx = dict(context)
                         local_ctx['$player'] = idx_val
@@ -409,32 +408,27 @@ class RulesEngine:
                     i += 1
                     continue
 
-            # --- Control Structure: PARALLEL ---
             if action_name == 'PARALLEL':
                 branches_raw = getattr(action_def, 'do', None)
                 wait_mode = (getattr(action_def, 'wait', None) or 'all').lower()
                 if not isinstance(branches_raw, list) or not branches_raw:
                     i += 1
                     continue
-                # Normalize branches: each entry is a list of actions
                 branches: List[List[EffectAction]] = []
                 for br in branches_raw:
                     if isinstance(br, list):
                         branches.append([EffectAction.parse_obj(x) if isinstance(x, dict) else x for x in br])
                     else:
                         branches.append([EffectAction.parse_obj(br) if isinstance(br, dict) else br])
-                # Deterministic order; for wait: all, simply execute sequentially
                 if wait_mode == 'all':
                     for branch in branches:
                         self.execute_effect(branch, game_state, context=dict(context))
                 else:
-                    # For now, treat non-'all' the same as 'all' (engine lacks async)
                     for branch in branches:
                         self.execute_effect(branch, game_state, context=dict(context))
                 i += 1
                 continue
 
-            # --- Control Structure: IF ---
             if action_name == 'IF':
                 cond_node = getattr(action_def, 'condition', None)
                 then_actions = getattr(action_def, 'then', None)
@@ -447,11 +441,9 @@ class RulesEngine:
                 i += 1
                 continue
 
-            # --- Normal action execution ---
             action_func = self.actions.get(action_name)
 
             if action_func:
-                # Use by_alias=False so keys like 'from_' match function signatures
                 raw_params = action_def.dict(exclude={"action"}, by_alias=False, exclude_none=True)
                 params: Dict[str, Any] = {}
                 for k, v in raw_params.items():

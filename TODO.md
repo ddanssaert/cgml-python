@@ -128,7 +128,8 @@ Legend
 - [x] Action name matching: enforce exact-case per spec; remove case-insensitive lookup and remove SET_GAME_STATE alias support (accept only SET_STATE).
 - [x] Remove FOR_EACH_PLAYER without do (next-action fan-out). Only explicit do is supported.
 - [x] Remove support for non-$ dotted paths; require $-rooted selectors exclusively.
-- [ ] Remove auto rank comparison casting in comparisons; require explicit rank_value for rank comparisons.
+- [x] Remove auto rank comparison casting in comparisons; require explicit rank_value for rank comparisons.
+- [x] Prohibit string-based rank comparisons; require explicit rank_value for rank comparisons (§12.5, §15, §19).
 - [x] Remove $.shared_zones as a separate path root; provide $.zones only (maintain internal alias if needed but not exposed).
 
 ## 11) Spec Feedback / Proposed Updates
