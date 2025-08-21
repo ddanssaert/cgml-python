@@ -717,7 +717,7 @@ def load_cgml_file(file_path: str) -> Optional[CgmlDefinition]:
     """
     try:
         merged_doc = _load_and_merge(file_path)
-        for inclusion in merged_doc['imports']:
+        for inclusion in merged_doc.get('imports', []):
             merged_doc = _merge_top_level(merged_doc, inclusion)
     except Exception as e:
         print(f"Failed to load/merge CGML file: {e}")
