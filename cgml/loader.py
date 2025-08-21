@@ -27,12 +27,15 @@ class Meta(BaseModel):
 
 # -- Components, Decks, Zones, Variables -- #
 
+
 class ComponentTypeDef(BaseModel):
-    # Extensible for decks/zones/others
+    """Generic component type definition, used for deck_types and zone_types."""
     composition: Optional[List[Any]] = None
     ordering: Optional[str] = None
     visibility: Optional[Dict[str, Any]] = None
     rank_hierarchy: Optional[List[Union[str, int]]] = None
+    default_face: Optional[str] = "up"  # For zone_types; "up" or "down"
+    allows_reorder: Optional[bool] = False  # For zone_types
 
 class DeckInstance(BaseModel):
     type: str
@@ -43,8 +46,15 @@ class ZoneInstance(BaseModel):
     type: str
     of_deck: Optional[str] = None
     per_player: Optional[bool] = False
-    # Optionally add owners/scopes in future extension
+    owner_scope: Optional[str] = "global"  # "player" | "team" | "global"
     meta: Optional[Dict[str, Any]] = None
+
+class VariableInstance(BaseModel):
+    name: str
+    scope: Optional[str] = "global"  # "global" | "per_player" | "per_team"
+    initial_value: Optional[Any] = None
+    computed: bool = False
+    expression: Optional["Operand"] = None
 
 class VariableInstance(BaseModel):
     name: str

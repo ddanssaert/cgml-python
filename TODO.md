@@ -16,10 +16,10 @@ Legend
   - [x] Deletion via disabled: true.
   - [x] Rule refinement via extends: <rule_id> (advisory validation).
 - [ ] After resolving imports and inheritance, validate merged document against schema (cgml.schema.json).
-- [ ] Expand Components models:
-  - [ ] ZoneInstance: owner_scope (player|team|global).
-  - [ ] VariableInstance: scope (global|per_player|per_team), computed: bool, expression: Operand/Condition tree.
-  - [ ] ComponentTypeDef for zone_types: default_face (up|down), allows_reorder: bool.
+- [x] Expand Components models:
+  - [x] ZoneInstance: owner_scope (player|team|global).
+  - [x] VariableInstance: scope (global|per_player|per_team), computed: bool, expression: Operand/Condition tree.
+  - [x] ComponentTypeDef for zone_types: default_face (up|down), allows_reorder: bool.
 - [ ] Improve validation errors: include file path, pointer to failing key.
 
 ## 2) Game State & Core Semantics
