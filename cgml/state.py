@@ -2,14 +2,13 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Union
 import random
 
-
 @dataclass
 class Card:
     id: str
     name: str
     properties: Dict[str, Any]
     owner: Optional[int] = None  # player id if applicable
-
+    face: str = "up"  # "up" or "down", default to up; set during zone assignment
 
 @dataclass
 class Zone:
@@ -19,6 +18,8 @@ class Zone:
     owner: Optional[int] = None      # player id or None for shared
     ordering: Optional[str] = None
     visibility: Optional[Dict[str, str]] = None
+    default_face: str = "up"
+    allows_reorder: Optional[bool] = None
     cards: List[Card] = field(default_factory=list)
 
     @property
@@ -33,6 +34,28 @@ class Zone:
             return None
         return self.cards[-1]
 
+    def visible_cards(self, viewer_id: Optional[int]) -> List[Card]:
+        """
+        Return cards visible to viewer_id according to visibility semantics on this zone.
+        viewer_id: the integer id of the viewing player (or None for non-player/global)
+        """
+        visibility = self.visibility or {}
+        if isinstance(viewer_id, int) and self.owner == viewer_id:
+            vis = visibility.get("owner", visibility.get("all", "all"))
+        elif viewer_id is not None:
+            vis = visibility.get("others", visibility.get("all", "all"))
+        else:
+            vis = visibility.get("all", "all")
+        if vis == "all":
+            return self.cards[:]
+        elif vis == "count_only":
+            return []
+        elif vis == "hidden":
+            return []
+        elif vis == "top_card_only":
+            return [self.top_card] if self.top_card else []
+        else:
+            return self.cards[:]
 
 @dataclass
 class Player:
@@ -40,7 +63,6 @@ class Player:
     name: str
     variables: Dict[str, Any] = field(default_factory=dict)
     zones: Dict[str, Zone] = field(default_factory=dict)
-
 
 @dataclass
 class GameState:
@@ -50,7 +72,6 @@ class GameState:
     decks: Dict[str, List[Card]] = field(default_factory=dict)
     cgml_definition: Any = None     # Optionally reference to loaded CgmlDefinition
     current_state: Optional[str] = None
-
 
 def create_deck(deck_def: dict, deck_type_def: Any) -> List[Card]:
     cards: List[Card] = []
@@ -72,7 +93,6 @@ def create_deck(deck_def: dict, deck_type_def: Any) -> List[Card]:
                     ))
     return cards
 
-
 def build_game_state_from_cgml(cgml: Any, player_count: int = None) -> GameState:
     deck_types = cgml.components.component_types.get('deck_types', {}) if cgml.components.component_types else {}
     zone_types = cgml.components.component_types.get('zone_types', {}) if cgml.components.component_types else {}
@@ -93,13 +113,17 @@ def build_game_state_from_cgml(cgml: Any, player_count: int = None) -> GameState
     shared_zone_defs = [z for z in zone_defs if not getattr(z, "per_player", False)]
 
     def _apply_zone_type(zone: Zone) -> None:
-        # Copy ordering/visibility from zone_types if available
+        # Copy ordering/visibility/default_face/allows_reorder from zone_types if available
         zt = zone_types.get(zone.type, None)
         if zt is not None:
             if getattr(zt, 'ordering', None) is not None:
                 zone.ordering = zt.ordering
             if getattr(zt, 'visibility', None) is not None:
                 zone.visibility = zt.visibility
+            if getattr(zt, 'default_face', None) is not None:
+                zone.default_face = zt.default_face
+            if getattr(zt, 'allows_reorder', None) is not None:
+                zone.allows_reorder = zt.allows_reorder
 
     for pidx in range(player_count):
         pname = f"Player {pidx + 1}"
@@ -134,16 +158,21 @@ def build_game_state_from_cgml(cgml: Any, player_count: int = None) -> GameState
         cgml_definition=cgml,
     )
 
-    # Assign the cards (by reference!) from deck into the appropriate zone at setup
+    # Assign the cards (by reference!) from deck into the appropriate zone at setup.
+    # For each assignment, set card.face to the zone's default_face.
     for deck_name, cards in decks.items():
         assigned = False
         for zone in state.shared_zones.values():
             if getattr(zone, 'of_deck', None) == deck_name:
+                for c in cards:
+                    c.face = zone.default_face
                 zone.cards.extend(cards)
                 assigned = True
         for player in state.players:
             for zone in player.zones.values():
                 if getattr(zone, 'of_deck', None) == deck_name:
+                    for c in cards:
+                        c.face = zone.default_face
                     zone.cards.extend(cards)
                     assigned = True
         if not assigned:
@@ -156,7 +185,6 @@ def build_game_state_from_cgml(cgml: Any, player_count: int = None) -> GameState
 
     return state
 
-
 def find_zone(state: GameState, zone_path: str, player: Optional[Player] = None) -> Zone:
     """
     Resolves a selector-like path to a Zone within the GameState.
@@ -165,16 +193,12 @@ def find_zone(state: GameState, zone_path: str, player: Optional[Player] = None)
     """
     if isinstance(zone_path, Zone):
         return zone_path
-
     if not isinstance(zone_path, str) or not zone_path.startswith('$.'):
         raise ValueError("Only $-rooted selector paths are supported for zone lookups.")
-
-    # JSONPath-like short support
     current: Any = {
         'players': state.players,
         'zones': state.shared_zones,
     }
-    # Very simple tokenizer
     parts: List[str] = []
     buf = ''
     i = 2
@@ -209,27 +233,35 @@ def find_zone(state: GameState, zone_path: str, player: Optional[Player] = None)
         return current
     raise ValueError(f"Path '{zone_path}' does not resolve to a Zone")
 
-
 def shuffle_zone(zone: Zone) -> None:
     random.shuffle(zone.cards)
 
-
 def move_cards(from_zone: Zone, to_zone: Zone, count: int = 1) -> None:
     for _ in range(min(count, len(from_zone.cards))):
-        to_zone.cards.append(from_zone.cards.pop())
-
+        # Remove from source zone according to its ordering
+        if from_zone.ordering == "fifo":
+            card = from_zone.cards.pop(0)
+        else:  # lifo/shuffled/unordered/default
+            card = from_zone.cards.pop()
+        # Insert into target zone according to its ordering
+        if to_zone.ordering == "fifo":
+            to_zone.cards.append(card)
+        elif to_zone.ordering == "lifo" or to_zone.ordering == "shuffled":
+            to_zone.cards.append(card)
+        elif to_zone.ordering == "unordered":
+            to_zone.cards.append(card)  # unordered: just append
+        else:
+            to_zone.cards.append(card)
 
 def move_all_cards(from_zone: Zone, to_zone: Zone) -> None:
     while from_zone.cards:
-        to_zone.cards.append(from_zone.cards.pop())
-
+        move_cards(from_zone, to_zone, 1)
 
 def deal_cards(from_zone: Zone, players: List[Player], to_zone_name: str, count: int) -> None:
     for _ in range(count):
         for player in players:
             if from_zone.cards:
                 player.zones[to_zone_name].cards.append(from_zone.cards.pop())
-
 
 def deal_all_cards(from_deck: Zone, players: List[Player], to_zone_name: str) -> None:
     idx = 0
@@ -239,15 +271,12 @@ def deal_all_cards(from_deck: Zone, players: List[Player], to_zone_name: str) ->
         player.zones[to_zone_name].cards.append(from_deck.cards.pop())
         idx += 1
 
-
 def find_card_zone(state: GameState, card: Card) -> Optional[Zone]:
     """Locate the zone containing the given card by identity or id."""
-    # Shared zones
     for zone in state.shared_zones.values():
         for c in zone.cards:
             if c is card or c.id == card.id:
                 return zone
-    # Player zones
     for p in state.players:
         for zone in p.zones.values():
             for c in zone.cards:
@@ -255,6 +284,15 @@ def find_card_zone(state: GameState, card: Card) -> Optional[Zone]:
                     return zone
     return None
 
+def card_owner(card: Card, state: GameState) -> Optional[int]:
+    """
+    Returns the owner/player id for the card, if present, based on containing zone
+    and owner/owner_scope semantics (v1.3).
+    """
+    zone = find_card_zone(state, card)
+    if not zone:
+        return None
+    return zone.owner
 
 def perform_setup_action(action: dict, state: GameState) -> None:
     """Perform a single setup action (supports v1.3 path operands for basic actions)."""
@@ -270,16 +308,13 @@ def perform_setup_action(action: dict, state: GameState) -> None:
         else:
             raise ValueError("SHUFFLE requires target.path")
     elif typ == "DEAL":
-        # DEAL in setup is a single-target deal, not round-robin
         frm = action.get('from')
         to = action.get('to')
         count = int(action.get('count', 1))
         from_zone = find_zone(state, frm['path'] if isinstance(frm, dict) else frm)
         to_path = to['path'] if isinstance(to, dict) else to
-        # Expecting a specific player's zone path like $.players[0].zones.hand
         if not to_path.startswith('$.players['):
             raise ValueError("DEAL setup expects a specific player's zone path under $.players[<idx>].zones.<name>")
-        # Parse player index and zone name
         try:
             idx_start = to_path.index('[') + 1
             idx_end = to_path.index(']')
@@ -287,19 +322,16 @@ def perform_setup_action(action: dict, state: GameState) -> None:
             zone_name = to_path.split('.zones.')[1]
         except Exception as e:
             raise ValueError(f"Invalid DEAL target path: {to_path}") from e
-        # Execute count cards to that player's zone
         for _ in range(count):
             if from_zone.cards:
                 state.players[pidx].zones[zone_name].cards.append(from_zone.cards.pop())
     elif typ == "DEAL_ROUND_ROBIN":
-        # Round-robin deal from a shared/source zone to all players' target zone
         frm = action.get('from')
         to = action.get('to')
         order = (action.get('order') or 'clockwise').lower()
         count = int(action.get('count', 1))
         from_zone = find_zone(state, frm['path'] if isinstance(frm, dict) else frm)
         to_path = to['path'] if isinstance(to, dict) else to
-        # Expecting $.players[*].zones.<name>
         if '[*]' not in to_path or '.zones.' not in to_path:
             raise ValueError("DEAL_ROUND_ROBIN setup expects path like $.players[*].zones.<zone>")
         to_zone_name = to_path.split('.zones.')[-1]
@@ -326,12 +358,10 @@ def perform_setup_action(action: dict, state: GameState) -> None:
         from_path = frm['path'] if isinstance(frm, dict) else frm
         to_path = to['path'] if isinstance(to, dict) else to
         deck_zone = find_zone(state, from_path)
-        # Expecting $.players[*].zones.<name>
         to_zone_name = to_path.split('.zones.')[-1]
         deal_all_cards(deck_zone, state.players, to_zone_name)
     else:
         raise NotImplementedError(f"Unknown setup action: {typ}")
-
 
 def run_setup_phase(state: GameState) -> None:
     """Runs all setup actions from the CGML file."""

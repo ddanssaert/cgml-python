@@ -23,11 +23,11 @@ Legend
 - [ ] Improve validation errors: include file path, pointer to failing key.
 
 ## 2) Game State & Core Semantics
-- [ ] Add Card.face: "up" | "down" (default from zone default_face).
-- [ ] Carry type-level settings into Zone instances (ordering, visibility, default_face, allows_reorder).
-- [ ] Enforce zone ordering semantics: unordered, fifo, lifo, shuffled.
-- [ ] Enforce zone visibility semantics (owner/others/all: all | count_only | hidden | top_card_only).
-- [ ] Implement owner(<card>) helper semantics (derive from containing zone owner/owner_scope).
+- [x] Add Card.face: "up" | "down" (default from zone default_face).
+- [x] Carry type-level settings into Zone instances (ordering, visibility, default_face, allows_reorder).
+- [x] Enforce zone ordering semantics: unordered, fifo, lifo, shuffled.
+- [x] Enforce zone visibility semantics (owner/others/all: all | count_only | hidden | top_card_only).
+- [x] Implement owner(<card>) helper semantics (derive from containing zone owner/owner_scope).
 
 ## 3) Path / Selector Language
 - [ ] Implement documented anchors: $currentPlayer, $activeState, $currentPhase, $turnOrder.
