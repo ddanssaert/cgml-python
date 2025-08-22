@@ -40,18 +40,18 @@ Legend
 - [x] Add support for distinct operator for deduplicating lists.
 
 ## 4) Expression / Operator Engine
-- [ ] Ensure top-level Condition nodes always resolve to boolean. Avoid returning raw values from max/min/sum/count in evaluate_condition.
-- [ ] Implement missing core operators per spec:
-  - [ ] any(list,predicate?), all(list,predicate?)
-  - [ ] len
-  - [ ] mul, div, mod, avg
-  - [ ] contains, in, exists
-  - [ ] canPerform: dry-run validation of an action spec
-- [ ] list constructor (list) – already partially supported; add schema docs if needed.
-- [ ] rank_value: use correct deck context (zone.of_deck or originating deck type); raise if ambiguous.
-- [ ] top/all/bottom as operands are supported; unify with path function equivalents.
-- [ ] Add support for distinct operator as per v1.3.
-- [ ] Add support for group_by operator as per v1.3.
+- [x] Ensure top-level Condition nodes always resolve to boolean. Avoid returning raw values from max/min/sum/count in evaluate_condition.
+- [x] Implement missing core operators per spec:
+  - [x] any(list,predicate?), all(list,predicate?)
+  - [x] len
+  - [x] mul, div, mod, avg
+  - [x] contains, in, exists
+  - [~] canPerform: dry-run validation of an action spec
+- [x] list constructor (list) – already partially supported; add schema docs if needed.
+- [x] rank_value: use correct deck context (zone.of_deck or originating deck type); raise if ambiguous.
+- [x] top/all/bottom as operands are supported; unify with path function equivalents.
+- [x] Add support for distinct operator as per v1.3.
+- [x] Add support for group_by operator as per v1.3.
 
 ## 5) Actions: Movement, Visibility, Search, Random, Structure
 - Movement & dealing

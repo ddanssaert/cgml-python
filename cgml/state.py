@@ -100,7 +100,7 @@ def create_deck(deck_def: dict, deck_type_def: Any) -> List[Card]:
                     cards.append(Card(
                         id=card_id,
                         name=card_name,
-                        properties={"rank": rank, "suit": suit}
+                        properties={"rank": rank, "suit": suit, "deck_type": deck_def['type']}
                     ))
     return cards
 

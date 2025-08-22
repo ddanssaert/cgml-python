@@ -180,20 +180,28 @@ class RulesEngine:
         try:
             if hasattr(value, 'properties') and isinstance(value.properties, dict) and 'rank' in value.properties:
                 rank = value.properties['rank']
+                # Try to get deck_type from zone context
+                zone = find_card_zone(game_state, value)
+                deck_type_name = None
+                if zone is not None and hasattr(zone, "of_deck") and zone.of_deck:
+                    cgml_def = getattr(game_state, "cgml_definition", None)
+                    deck_type_name = (cgml_def.components.decks.get(zone.of_deck).type
+                        if hasattr(cgml_def.components, "decks") and zone.of_deck in cgml_def.components.decks
+                        else None)
+                if deck_type_name is None:
+                    # Fallback: Take from card properties if present.
+                    deck_type_name = value.properties.get("deck_type") if isinstance(value.properties, dict) else None
+                if deck_type_name is not None:
+                    return get_rank_index(game_state.cgml_definition, deck_type_name, rank)
+                raise ValueError("rank_value: Could not determine deck type for card; requires zone context or explicit deck_type")
             elif isinstance(value, dict) and 'properties' in value and 'rank' in value['properties']:
+                # Repeat as above for dict case
                 rank = value['properties']['rank']
-            else:
-                rank = value
-        except Exception:
-            rank = value
-        cgml_def = getattr(game_state, "cgml_definition", None)
-        if cgml_def and cgml_def.components and cgml_def.components.component_types:
-            deck_types = cgml_def.components.component_types.get('deck_types', {})
-            if deck_types:
-                deck_type_name = next(iter(deck_types))
-                return get_rank_index(cgml_def, deck_type_name, rank)
-        order = ['2','3','4','5','6','7','8','9','10','J','Q','K','A']
-        return order.index(str(rank)) if str(rank) in order else int(rank)
+                # ...repeat logic as above...
+        except Exception as e:
+            raise ValueError(f"Error computing rank_value: {e}")
+        # If a rank literal, err if ambiguous per spec
+        raise ValueError("rank_value: Cannot infer numeric value for ambiguous rank; specify deck/zone context")
 
     @staticmethod
     def _count_value(value: Any) -> int:
@@ -282,10 +290,15 @@ class RulesEngine:
             return not self.evaluate_condition(cond.not_, game_state, context)
         if getattr(cond, "max_", None) is not None:
             vals = [self.resolve_operand(x, game_state, context) for x in cond.max_]
-            return max(vals)
+            result = max(vals)
+            # CGML spec: conditions should resolve to bool
+            return bool(result)
+
         if getattr(cond, "min_", None) is not None:
             vals = [self.resolve_operand(x, game_state, context) for x in cond.min_]
-            return min(vals)
+            result = min(vals)
+            return bool(result)
+
         if getattr(cond, "sum_", None) is not None:
             vals = [self.resolve_operand(x, game_state, context) for x in cond.sum_]
             flat_vals: List[Any] = []
@@ -294,16 +307,20 @@ class RulesEngine:
                     flat_vals.extend(v)
                 else:
                     flat_vals.append(v)
-            return sum(flat_vals)
+            result = sum(flat_vals)
+            return bool(result)
+
         if getattr(cond, "count", None) is not None:
             collection = cond.count
             if isinstance(collection, list) and len(collection) == 1:
                 resolved = self.resolve_operand(collection[0], game_state, context)
-                return self._count_value(resolved)
+                result = self._count_value(resolved)
             elif isinstance(collection, (list, tuple)):
-                return len(collection)
+                result = len(collection)
             else:
-                return self._count_value(collection)
+                result = self._count_value(collection)
+            return bool(result)
+
         if getattr(cond, "value", None) is not None:
             return bool(cond.value)
         if getattr(cond, "path", None) is not None:
@@ -338,6 +355,80 @@ class RulesEngine:
                 key = self.resolve_operand(key_expr, game_state, group_ctx)
                 grouped.setdefault(key, []).append(item)
             return grouped
+        if hasattr(cond, "any_") and cond.any_ is not None:
+            sequence = self.resolve_operand(cond.any_[0], game_state, context)
+            predicate = cond.any_[1] if len(cond.any_) > 1 else None
+            if predicate is not None:
+                return any(self.evaluate_condition(predicate, game_state, {**context, "item": item}) for item in sequence)
+            return any(sequence)
+
+        if hasattr(cond, "all_") and cond.all_ is not None:
+            sequence = self.resolve_operand(cond.all_[0], game_state, context)
+            predicate = cond.all_[1] if len(cond.all_) > 1 else None
+            if predicate is not None:
+                return all(self.evaluate_condition(predicate, game_state, {**context, "item": item}) for item in sequence)
+            return all(sequence)
+
+        if hasattr(cond, "len_", None) and cond.len_ is not None:
+            val = self.resolve_operand(cond.len_[0], game_state, context)
+            try:
+                return bool(len(val))
+            except Exception:
+                return False
+
+        if hasattr(cond, "mul", None) and cond.mul is not None:
+            a = self.resolve_operand(cond.mul[0], game_state, context)
+            b = self.resolve_operand(cond.mul[1], game_state, context)
+            try:
+                return bool(a * b)
+            except Exception:
+                return False
+
+        if hasattr(cond, "div", None) and cond.div is not None:
+            a = self.resolve_operand(cond.div[0], game_state, context)
+            b = self.resolve_operand(cond.div[1], game_state, context)
+            try:
+                return bool(a / b) if b else False
+            except Exception:
+                return False
+
+        if hasattr(cond, "mod", None) and cond.mod is not None:
+            a = self.resolve_operand(cond.mod[0], game_state, context)
+            b = self.resolve_operand(cond.mod[1], game_state, context)
+            try:
+                return bool(a % b)
+            except Exception:
+                return False
+
+        if hasattr(cond, "avg", None) and cond.avg is not None:
+            vals = [self.resolve_operand(x, game_state, context) for x in cond.avg]
+            avg = float(sum(vals)) / len(vals) if vals else 0
+            return bool(avg)
+
+        if hasattr(cond, "contains", None) and cond.contains is not None:
+            sequence = self.resolve_operand(cond.contains[0], game_state, context)
+            item = self.resolve_operand(cond.contains[1], game_state, context)
+            return item in sequence
+
+        if hasattr(cond, "in_", None) and cond.in_ is not None:
+            item = self.resolve_operand(cond.in_[0], game_state, context)
+            sequence = self.resolve_operand(cond.in_[1], game_state, context)
+            return item in sequence
+
+        if hasattr(cond, "exists", None) and cond.exists is not None:
+            val = self.resolve_operand(cond.exists[0], game_state, context)
+            return val is not None and (val != [] and val != {} and val != "")
+
+        if hasattr(cond, "canPerform", None) and cond.canPerform is not None:
+            # cond.canPerform[0] should be an action dict
+            action_candidate = cond.canPerform[0]
+            # Placeholder: TODO - implement a proper dry-run. For now, just check if action is recognized.
+            action_name = action_candidate.get("action")
+            if not action_name or action_name not in self.actions:
+                return False
+            # Would normally check preconditions, parameters, etc.
+            return True
+
         return False
 
     def resolve_operand(
@@ -460,6 +551,12 @@ class RulesEngine:
                 return sum(vals)
             if getattr(operand, "list_", None) is not None:
                 return [self.resolve_operand(x, game_state, context) for x in operand.list_]
+            if getattr(operand, "len_", None) is not None:
+                val = self.resolve_operand(operand.len_[0], game_state, context)
+                try:
+                    return len(val)
+                except Exception:
+                    return 0
         return operand
 
     def _resolve_action_params(self, action_def: EffectAction, game_state: Any, context: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
