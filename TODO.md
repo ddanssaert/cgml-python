@@ -30,14 +30,14 @@ Legend
 - [x] Implement owner(<card>) helper semantics (derive from containing zone owner/owner_scope).
 
 ## 3) Path / Selector Language
-- [ ] Implement documented anchors: $currentPlayer, $activeState, $currentPhase, $turnOrder.
-- [ ] Add selector filters: [by_id=...], [current], [opponent], [team=...].
-- [ ] Add path functions: top(<zone|list>), bottom(<zone|list>), all(<zone>), count(<zone|list>), owner(<card>), rank(<card>).
-- [ ] Support ref placeholders in path strings: ref:<name>.
+- [x] Implement documented anchors: $currentPlayer, $activeState, $currentPhase, $turnOrder.
+- [x] Add selector filters: [by_id=...], [current], [opponent], [team=...].
+- [x] Add path functions: top(<zone|list>), bottom(<zone|list>), all(<zone>), count(<zone|list>), owner(<card>), rank(<card>).
+- [x] Support ref placeholders in path strings: ref:<name>.
 - [x] Keep $.shared_zones only if documented; otherwise remove or alias through $.zones (spec-align).
 - [x] Remove support for non-$ dotted paths; require $-rooted selectors (align to spec).
-- [ ] Add support for group_by operator for aggregating/grouping lists.
-- [ ] Add support for distinct operator for deduplicating lists.
+- [x] Add support for group_by operator for aggregating/grouping lists.
+- [x] Add support for distinct operator for deduplicating lists.
 
 ## 4) Expression / Operator Engine
 - [ ] Ensure top-level Condition nodes always resolve to boolean. Avoid returning raw values from max/min/sum/count in evaluate_condition.

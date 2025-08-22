@@ -1,18 +1,48 @@
+import re
 from typing import Any, Dict, Callable, List, Union, Optional, Tuple
 
 from .loader import Condition, Operand, EffectAction
+from .state import card_owner, card_rank, find_card_zone
+
+def _resolve_ref_placeholders(path: str, context: Dict[str, Any]) -> str:
+    """Replace ref:<name> in path with value from context."""
+    def repl(match):
+        name = match.group(1)
+        return str(context.get(name, ""))
+    return re.sub(r"ref:([A-Za-z0-9_]+)", repl, path)
 
 def resolve_path(obj: Any, path: str, context: Optional[Dict[str, Any]] = None) -> Any:
     """
-    Selector resolver supporting a subset of CGML v1.3 $-rooted syntax.
+    Selector resolver supporting CGML v1.3 anchors, selector filters, and basic path functions.
     """
     context = context or {}
-    if path is None:
-        return obj
-
     p = path.strip()
     if not p.startswith("$"):
         raise ValueError(f"Only $-rooted selector paths are supported (got: {path})")
+
+    # 1. Anchor Replacement
+    anchor_map = {
+        "$currentPlayer": context.get("currentPlayer"),
+        "$activeState": context.get("activeState"),
+        "$currentPhase": context.get("currentPhase"),
+        "$turnOrder": context.get("turnOrder"),
+    }
+    for anchor, val in anchor_map.items():
+        if anchor in p and val is not None:
+            if anchor == "$currentPlayer":
+                # Replace with $.players[<index>]
+                p = p.replace(anchor, f"$.players[{val}]")
+            else:
+                # Replace with literal value
+                p = p.replace(anchor, str(val))
+
+    # 2. Interpolate ref:<name> in path
+    p = _resolve_ref_placeholders(p, context)
+
+    # 3. Parse parts and handle selector filters
+    #    (e.g. $.players[by_id=alice], $.players[current], $.players[opponent], $.players[team=red])
+    # Basic path splitting
+    # We'll add support for filters here after splitting into parts
 
     root = {
         "players": getattr(obj, "players", None),
@@ -34,19 +64,69 @@ def resolve_path(obj: Any, path: str, context: Optional[Dict[str, Any]] = None) 
         i += 1
     if buf:
         parts.append(buf)
+
+    # Walk through each part, handling filters
     for part in parts:
-        key = part
-        idx_token: Optional[str] = None
-        star = False
+        # Detect [<filter>] or [<idx>]
         if '[' in part and part.endswith(']'):
             key = part[: part.index('[')]
             inside = part[part.index('[') + 1 : -1]
-            if inside == '*':
-                star = True
+            # Support array access/filter
+            if key == "players":
+                plist = None
+                # Support root access
+                if isinstance(current, dict):
+                    plist = current.get("players")
+                elif hasattr(current, "players"):
+                    plist = current.players
+                else:
+                    plist = current
+                if inside == '*':
+                    current = plist
+                elif inside.isdigit():
+                    current = [plist[int(inside)]]
+                elif inside == "current":
+                    val = context.get("currentPlayer", 0)
+                    current = [plist[int(val)]] if plist else None
+                elif inside == "opponent":
+                    cur = int(context.get("currentPlayer", 0))
+                    current = [p for idx, p in enumerate(plist) if idx != cur]
+                elif inside.startswith("by_id="):
+                    val = inside[6:]
+                    current = [p for p in plist if str(getattr(p, "id", "")) == val]
+                elif inside.startswith("team="):
+                    val = inside[5:]
+                    current = [p for p in plist if getattr(p, "team", None) == val]
+                elif inside.startswith("$"):  # handle anchors like $player
+                    anchor_name = inside[1:]  # e.g. 'player'
+                    anchor_val = context.get(f"${anchor_name}")
+                    if anchor_val is None:
+                        raise ValueError(f"Selector uses anchor ${anchor_name} but context provides no value for it.")
+                    current = [plist[int(anchor_val)]]
+                else:
+                    raise NotImplementedError(f"Selector filter not recognized: [{inside}] in path {path}")
+                # Single result, skip down dictionary objects...
+                if isinstance(current, list) and len(current) == 1:
+                    current = current[0]
             else:
-                idx_token = inside
-        if key:
+                # Descent for per-player zones, e.g. zones[deck]
+                zimap = None
+                if isinstance(current, dict):
+                    zimap = current.get(key)
+                elif hasattr(current, key):
+                    zimap = getattr(current, key)
+                else:
+                    raise KeyError(f"Cannot access key '{key}' in {type(current)}")
+                # Simplify: only array lookup, e.g. [hand] in zones
+                if inside == '*':
+                    current = list(zimap.values())
+                else:
+                    # Name lookups (zone_name etc)
+                    current = zimap[inside] if isinstance(zimap, dict) else None
+        else:
+            key = part
             if isinstance(current, list):
+                # Apply to all objects unless it's supposed to be a dict attr
                 mapped: List[Any] = []
                 for elem in current:
                     if isinstance(elem, dict):
@@ -54,35 +134,13 @@ def resolve_path(obj: Any, path: str, context: Optional[Dict[str, Any]] = None) 
                     else:
                         mapped.append(getattr(elem, key))
                 current = mapped
+                # flatten if result is singleton per list
+                if len(current) == 1:
+                    current = current[0]
             elif isinstance(current, dict):
                 current = current.get(key)
             else:
                 current = getattr(current, key)
-        if star:
-            if isinstance(current, dict):
-                current = list(current.values())
-            if not isinstance(current, list):
-                current = [current]
-        elif idx_token is not None:
-            if idx_token.startswith('$'):
-                if idx_token in context:
-                    try:
-                        idx = int(context[idx_token])
-                    except Exception:
-                        idx = context[idx_token]
-                else:
-                    raise KeyError(f"Context variable '{idx_token}' not set for path {path}")
-            else:
-                try:
-                    idx = int(idx_token)
-                except ValueError:
-                    idx = idx_token
-            if isinstance(current, list):
-                current = current[idx]  # type: ignore[index]
-            elif isinstance(current, dict):
-                current = current[idx]  # type: ignore[index]
-            else:
-                raise KeyError(f"Cannot index non-collection with [{idx_token}] in path {path}")
     return current
 
 def get_rank_index(cgml_definition: Any, deck_type_name: str, rank_value: Any) -> int:
@@ -252,6 +310,34 @@ class RulesEngine:
             return bool(resolve_path(game_state, cond.path, context))
         if getattr(cond, "ref", None) is not None:
             return bool(context.get(cond.ref))
+        if hasattr(cond, "distinct") and cond.distinct is not None:
+            items = self.resolve_operand(cond.distinct[0], game_state, context)
+            try:
+                items = list(items)
+            except Exception:
+                pass
+            result, seen = [], set()
+            for it in items:
+                val = it
+                # Scalars/dicts? Use id or as-is
+                if isinstance(it, dict) and "id" in it:
+                    val = it["id"]
+                elif hasattr(it, "id"):
+                    val = it.id
+                if val not in seen:
+                    seen.add(val)
+                    result.append(it)
+            return result
+        if hasattr(cond, "group_by") and cond.group_by is not None:
+            list_items = self.resolve_operand(cond.group_by[0], game_state, context)
+            key_expr = cond.group_by[1]
+            grouped = {}
+            for item in list_items:
+                group_ctx = dict(context or {})
+                group_ctx["item"] = item
+                key = self.resolve_operand(key_expr, game_state, group_ctx)
+                grouped.setdefault(key, []).append(item)
+            return grouped
         return False
 
     def resolve_operand(
@@ -265,6 +351,50 @@ class RulesEngine:
         """
         context = context or {}
 
+        if isinstance(operand, dict) and len(operand) == 1:
+            op, arg = list(operand.items())[0]
+            if op == "top":
+                x = self.resolve_operand(arg[0], game_state, context)
+                if hasattr(x, "cards"):
+                    return x.top_card if hasattr(x, "top_card") else (x.cards[-1] if x.cards else None)
+                elif isinstance(x, list):
+                    return x[-1] if x else None
+                return x
+            elif op == "bottom":
+                x = self.resolve_operand(arg[0], game_state, context)
+                if hasattr(x, "bottom_card"):
+                    return x.bottom_card
+                elif hasattr(x, "cards"):
+                    return x.cards[0] if x.cards else None
+                elif isinstance(x, list):
+                    return x[0] if x else None
+                return x
+            elif op == "all":
+                x = self.resolve_operand(arg[0], game_state, context)
+                # Accept both Zone and list
+                if hasattr(x, "all_cards"):
+                    return x.all_cards()
+                elif hasattr(x, "cards"):
+                    return x.cards[:]
+                return list(x) if isinstance(x, (list, tuple)) else []
+            elif op == "count":
+                x = self.resolve_operand(arg[0], game_state, context)
+                if hasattr(x, "card_count"):
+                    return x.card_count
+                try:
+                    return len(x)
+                except Exception:
+                    return 1 if x is not None else 0
+            elif op == "owner":
+                y = self.resolve_operand(arg[0], game_state, context)
+                return card_owner(y, game_state) if y else None
+            elif op == "rank":
+                y = self.resolve_operand(arg[0], game_state, context)
+                return card_rank(y)
+            elif op == "distinct":
+                return self.evaluate_condition({"distinct": arg}, game_state, context)
+            elif op == "group_by":
+                return self.evaluate_condition({"group_by": arg}, game_state, context)
         if isinstance(operand, dict):
             operand = Operand.parse_obj(operand)
         if isinstance(operand, Operand):

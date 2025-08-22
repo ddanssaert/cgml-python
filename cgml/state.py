@@ -34,6 +34,17 @@ class Zone:
             return None
         return self.cards[-1]
 
+    @property
+    def bottom_card(self) -> Optional['Card']:
+        """Returns the bottom card in this zone, or None if zone is empty."""
+        if not self.cards:
+            return None
+        return self.cards[0]
+
+    def all_cards(self) -> List['Card']:
+        """Returns all cards in this zone."""
+        return self.cards[:]
+
     def visible_cards(self, viewer_id: Optional[int]) -> List[Card]:
         """
         Return cards visible to viewer_id according to visibility semantics on this zone.
@@ -293,6 +304,10 @@ def card_owner(card: Card, state: GameState) -> Optional[int]:
     if not zone:
         return None
     return zone.owner
+
+def card_rank(card: Card) -> Any:
+    """Return a card's rank property if present."""
+    return card.properties.get('rank') if hasattr(card, "properties") and isinstance(card.properties, dict) else None
 
 def perform_setup_action(action: dict, state: GameState) -> None:
     """Perform a single setup action (supports v1.3 path operands for basic actions)."""
